@@ -12,6 +12,7 @@ export function useDesktop(instanceId: number, enabled: boolean) {
     useState<DesktopConnectionState>("disconnected");
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RFB | null>(null);
+  const clipboardTextRef = useRef<string>("");
   const [connectTrigger, setConnectTrigger] = useState(0);
 
   const connect = useCallback(() => {
@@ -52,6 +53,11 @@ export function useDesktop(instanceId: number, enabled: boolean) {
         }
       });
 
+      rfb.addEventListener("clipboard", (ev: Event) => {
+        const text = (ev as CustomEvent).detail?.text;
+        if (text) clipboardTextRef.current = text;
+      });
+
       rfbRef.current = rfb;
     } catch {
       setConnectionState("error");
@@ -82,14 +88,33 @@ export function useDesktop(instanceId: number, enabled: boolean) {
     setConnectTrigger((n) => n + 1);
   }, []);
 
-  const sendCtrlAltDel = useCallback(() => {
-    rfbRef.current?.sendCtrlAltDel();
+  const copyFromRemote = useCallback(async () => {
+    if (clipboardTextRef.current) {
+      await navigator.clipboard.writeText(clipboardTextRef.current);
+    }
+  }, []);
+
+  const pasteToRemote = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const rfb = rfbRef.current;
+      if (!rfb || !text) return;
+      rfb.clipboardPasteFrom(text);
+      // Simulate Ctrl+V to actually paste in the remote desktop
+      rfb.sendKey(0xFFE3, "ControlLeft", true);
+      rfb.sendKey(0x0076, "KeyV", true);
+      rfb.sendKey(0x0076, "KeyV", false);
+      rfb.sendKey(0xFFE3, "ControlLeft", false);
+    } catch {
+      // Clipboard read permission denied or not available
+    }
   }, []);
 
   return {
     connectionState,
     containerRef,
     reconnect,
-    sendCtrlAltDel,
+    copyFromRemote,
+    pasteToRemote,
   };
 }

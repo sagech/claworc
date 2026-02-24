@@ -1,5 +1,5 @@
 import { useCallback, useRef, type Ref } from "react";
-import { Wifi, WifiOff, Loader2, RefreshCw, Maximize, ExternalLink, MessageSquare } from "lucide-react";
+import { Wifi, WifiOff, Loader2, RefreshCw, Maximize, ExternalLink, MessageSquare, Copy, ClipboardPaste } from "lucide-react";
 import type { DesktopConnectionState } from "@/hooks/useDesktop";
 
 interface VncPanelProps {
@@ -7,7 +7,8 @@ interface VncPanelProps {
   connectionState: DesktopConnectionState;
   containerRef: Ref<HTMLDivElement>;
   reconnect: () => void;
-  sendCtrlAltDel: () => void;
+  copyFromRemote: () => void;
+  pasteToRemote: () => void;
   chatOpen?: boolean;
   onChatToggle?: () => void;
   showNewWindow?: boolean;
@@ -48,7 +49,8 @@ export default function VncPanel({
   connectionState,
   containerRef,
   reconnect,
-  sendCtrlAltDel,
+  copyFromRemote,
+  pasteToRemote,
   chatOpen,
   onChatToggle,
   showNewWindow = true,
@@ -86,13 +88,22 @@ export default function VncPanel({
           </button>
         )}
         {connectionState === "connected" && (
-          <button
-            onClick={sendCtrlAltDel}
-            className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
-            title="Send Ctrl+Alt+Del"
-          >
-            Ctrl+Alt+Del
-          </button>
+          <>
+            <button
+              onClick={copyFromRemote}
+              className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+              title="Copy selected text from remote desktop to clipboard"
+            >
+              <Copy size={14} /> Copy
+            </button>
+            <button
+              onClick={pasteToRemote}
+              className="flex items-center gap-1 px-1.5 py-1 text-xs text-gray-400 hover:text-white rounded"
+              title="Paste clipboard content into remote desktop"
+            >
+              <ClipboardPaste size={14} /> Paste
+            </button>
+          </>
         )}
         <div className="flex-1" />
         {showNewWindow && (

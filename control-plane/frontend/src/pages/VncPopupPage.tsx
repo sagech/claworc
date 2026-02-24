@@ -28,7 +28,8 @@ export default function VncPopupPage() {
         connectionState={desktopHook.connectionState}
         containerRef={desktopHook.containerRef}
         reconnect={desktopHook.reconnect}
-        sendCtrlAltDel={desktopHook.sendCtrlAltDel}
+        copyFromRemote={desktopHook.copyFromRemote}
+        pasteToRemote={desktopHook.pasteToRemote}
       />
     </div>
   );

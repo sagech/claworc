@@ -877,14 +877,21 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orch := orchestrator.Get()
+	if orch == nil {
+		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		return
+	}
+
 	if SSHMgr == nil {
 		writeError(w, http.StatusServiceUnavailable, "SSH manager not initialized")
 		return
 	}
 
-	client, ok := SSHMgr.GetConnection(inst.ID)
-	if !ok {
-		writeError(w, http.StatusServiceUnavailable, "No SSH connection for instance")
+	client, err := SSHMgr.EnsureConnectedWithIPCheck(r.Context(), inst.ID, orch, inst.AllowedSourceIPs)
+	if err != nil {
+		log.Printf("Failed to get SSH connection for instance %d: %v", inst.ID, err)
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("SSH connection failed: %v", err))
 		return
 	}
 
