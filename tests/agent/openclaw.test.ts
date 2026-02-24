@@ -89,14 +89,18 @@ describe("agent image", { timeout: 300_000 }, () => {
     const check = exec(["pgrep", "-f", "openclaw gateway"]);
     if (check.exitCode !== 0) {
       // Dump diagnostics before failing
-      console.error("=== Container logs (s6-overlay init with S6_VERBOSITY=2) ===");
+      console.error("=== Container logs ===");
       console.error(hostExec(["docker", "logs", "--tail", "200", CONTAINER]));
-      console.error("=== s6-rc service list (brought up) ===");
+      console.error("=== s6-rc compiled services ===");
+      console.error(exec(["/package/admin/s6-rc/command/s6-rc-db", "-c", "/run/s6-rc/compiled", "list", "services"]).stdout || "(none)");
+      console.error("=== s6-rc-db type user ===");
+      console.error(exec(["bash", "-c", "/package/admin/s6-rc/command/s6-rc-db -c /run/s6-rc/compiled type user 2>&1"]).stdout || "(failed)");
+      console.error("=== s6-rc-db type init-setup ===");
+      console.error(exec(["bash", "-c", "/package/admin/s6-rc/command/s6-rc-db -c /run/s6-rc/compiled type init-setup 2>&1"]).stdout || "(failed)");
+      console.error("=== try manual s6-rc change init-setup ===");
+      console.error(exec(["bash", "-c", "/package/admin/s6-rc/command/s6-rc -v2 -l /run/s6-rc change init-setup 2>&1"]).stdout || "(failed)");
+      console.error("=== s6-rc service list after manual change ===");
       console.error(exec(["/package/admin/s6-rc/command/s6-rc", "-a", "list"]).stdout || "(none)");
-      console.error("=== s6-rc compiled database ===");
-      console.error(exec(["ls", "-la", "/run/s6-rc/compiled/"]).stdout || "(missing)");
-      console.error("=== s6-rc compiled resolve dir ===");
-      console.error(exec(["ls", "-la", "/run/s6-rc/compiled/resolve/"]).stdout || "(missing)");
       console.error("=== Process list ===");
       console.error(exec(["ps", "aux"]).stdout || "(empty)");
       throw new Error("openclaw gateway did not start within 240s");
