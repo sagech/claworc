@@ -393,6 +393,22 @@ func (d *DockerOrchestrator) GetInstanceStatus(ctx context.Context, name string)
 	}
 }
 
+func (d *DockerOrchestrator) GetInstanceImageInfo(ctx context.Context, name string) (string, error) {
+	inspect, err := d.client.ContainerInspect(ctx, name)
+	if err != nil {
+		if dockerclient.IsErrNotFound(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("inspect container: %w", err)
+	}
+	tag := inspect.Config.Image
+	sha := inspect.Image
+	if len(sha) > 19 { // "sha256:" (7) + 12 chars
+		sha = sha[:19]
+	}
+	return fmt.Sprintf("%s (%s)", tag, sha), nil
+}
+
 func (d *DockerOrchestrator) ConfigureSSHAccess(ctx context.Context, instanceID uint, publicKey string) error {
 	var inst database.Instance
 	if err := database.DB.First(&inst, instanceID).Error; err != nil {

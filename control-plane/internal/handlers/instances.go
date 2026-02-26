@@ -75,6 +75,7 @@ type instanceResponse struct {
 	HasTimezoneOverride   bool            `json:"has_timezone_override"`
 	UserAgent             *string         `json:"user_agent"`
 	HasUserAgentOverride  bool            `json:"has_user_agent_override"`
+	LiveImageInfo         *string         `json:"live_image_info,omitempty"`
 	AllowedSourceIPs      string          `json:"allowed_source_ips"`
 	ControlURL            string          `json:"control_url"`
 	GatewayToken          string          `json:"gateway_token"`
@@ -635,12 +636,19 @@ func GetInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	orch := orchestrator.Get()
 	orchStatus := "stopped"
-	if orch := orchestrator.Get(); orch != nil {
+	if orch != nil {
 		orchStatus, _ = orch.GetInstanceStatus(r.Context(), inst.Name)
 	}
 	status := resolveStatus(&inst, orchStatus)
-	writeJSON(w, http.StatusOK, instanceToResponse(inst, status))
+	resp := instanceToResponse(inst, status)
+	if orch != nil {
+		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
+			resp.LiveImageInfo = &info
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type instanceUpdateRequest struct {
@@ -777,7 +785,13 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := resolveStatus(&inst, orchStatus)
-	writeJSON(w, http.StatusOK, instanceToResponse(inst, status))
+	resp := instanceToResponse(inst, status)
+	if orch != nil {
+		if info, err := orch.GetInstanceImageInfo(r.Context(), inst.Name); err == nil && info != "" {
+			resp.LiveImageInfo = &info
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func DeleteInstance(w http.ResponseWriter, r *http.Request) {

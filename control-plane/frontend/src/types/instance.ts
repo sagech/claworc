@@ -27,6 +27,7 @@ export interface Instance {
   has_timezone_override: boolean;
   user_agent: string | null;
   has_user_agent_override: boolean;
+  live_image_info?: string;
   allowed_source_ips: string;
   control_url: string;
   gateway_token: string;

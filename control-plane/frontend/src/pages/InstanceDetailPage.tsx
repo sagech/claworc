@@ -34,6 +34,7 @@ import { useTerminal } from "@/hooks/useTerminal";
 import { useDesktop } from "@/hooks/useDesktop";
 import { useChat } from "@/hooks/useChat";
 import type { InstanceUpdatePayload } from "@/types/instance";
+import { buildSSHTooltip } from "@/utils/sshTooltip";
 
 type Tab = "overview" | "chrome" | "terminal" | "files" | "config" | "logs";
 
@@ -343,7 +344,7 @@ export default function InstanceDetailPage() {
           <h1 className="text-xl font-semibold text-gray-900">
             {instance.display_name}
           </h1>
-          <StatusBadge status={instance.status} />
+          <StatusBadge status={instance.status} tooltip={buildSSHTooltip(sshStatus.data)} />
         </div>
         <ActionButtons
           instance={instance}
@@ -385,8 +386,16 @@ export default function InstanceDetailPage() {
           <div className="bg-white rounded-lg border border-gray-200 p-6">
             <div className="grid grid-cols-2 gap-y-4 gap-x-8">
               {[
-                { label: "Instance Name", value: instance.name },
                 { label: "Display Name", value: instance.display_name },
+                {
+                  label: "Agent Image",
+                  value: instance.live_image_info
+                    ? instance.live_image_info
+                    : instance.has_image_override
+                      ? instance.container_image ?? ""
+                      : "Default",
+                },
+                { label: "Instance Name", value: instance.name },
                 { label: "Status", value: instance.status },
                 {
                   label: "CPU",
@@ -401,12 +410,6 @@ export default function InstanceDetailPage() {
                   value: instance.storage_homebrew,
                 },
                 { label: "Storage (Home)", value: instance.storage_home },
-                {
-                  label: "Agent Image",
-                  value: instance.has_image_override
-                    ? instance.container_image ?? ""
-                    : "Default",
-                },
                 {
                   label: "VNC Resolution",
                   value: instance.has_resolution_override

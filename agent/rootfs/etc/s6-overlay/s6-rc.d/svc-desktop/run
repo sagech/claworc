@@ -16,9 +16,20 @@ if [ -n "$CHROMIUM_USER_AGENT" ]; then
   EXTRA_ARGS+=("--user-agent=$CHROMIUM_USER_AGENT")
 fi
 
-# Run chromium in a restart loop
+# Auto-detect browser
+if command -v google-chrome-stable >/dev/null 2>&1; then
+  BROWSER=google-chrome-stable
+  EXTRA_ARGS+=(--no-sandbox)
+elif command -v brave-browser >/dev/null 2>&1; then
+  BROWSER=brave-browser
+  EXTRA_ARGS+=(--no-sandbox --test-type)
+else
+  BROWSER=/usr/bin/chromium
+fi
+
+# Run browser in a restart loop
 while true; do
-  s6-setuidgid claworc /usr/bin/chromium \
+  s6-setuidgid claworc $BROWSER \
     --no-first-run \
     --password-store=basic \
     --simulate-outdated-no-au='Tue, 31 Dec 2099 23:59:59 GMT' \
