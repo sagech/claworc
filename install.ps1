@@ -157,6 +157,11 @@ function Install-Docker {
 
     # --- Launch --------------------------------------------------------------
 
+    # Ensure the claworc network exists so the control-plane container can
+    # reach agent containers directly by IP (avoids 127.0.0.1 loopback issue).
+    docker network create claworc 2>$null
+    if ($LASTEXITCODE -ne 0) { $LASTEXITCODE = 0 }  # ignore "already exists" error
+
     Write-Host ""
     Write-Host "Starting dashboard..."
 
@@ -166,6 +171,7 @@ function Install-Docker {
     docker run -d `
         --platform linux/amd64 `
         --name $ContainerName `
+        --network claworc `
         -p "${port}:8000" `
         -v /var/run/docker.sock:/var/run/docker.sock `
         -v "${dataDirUnix}:${dataDirUnix}" `
