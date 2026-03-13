@@ -53,6 +53,9 @@ func launchEmbeddedServer() (string, context.CancelFunc, func()) {
 	if err := database.Init(); err != nil {
 		log.Fatalf("database init: %v", err)
 	}
+	if err := database.InitLogsDB(dataDir); err != nil {
+		log.Fatalf("logs database init: %v", err)
+	}
 
 	if err := database.SetSetting("orchestrator_backend", "docker"); err != nil {
 		log.Fatalf("seed orchestrator_backend: %v", err)

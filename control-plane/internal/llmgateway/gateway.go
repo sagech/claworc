@@ -372,6 +372,9 @@ func logLine(instanceID uint, providerKey, model, path string, statusCode int, l
 
 // logRequest records a proxied request in llm-logs.db.
 func logRequest(instanceID, providerID uint, model string, inputTokens, outputTokens, cachedInputTokens int, costUSD float64, statusCode int, latencyMs int64, errMsg string) {
+	if database.LogsDB == nil {
+		return
+	}
 	if err := database.LogsDB.Create(&database.LLMRequestLog{
 		InstanceID:        instanceID,
 		ProviderID:        providerID,
