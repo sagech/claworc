@@ -39,13 +39,13 @@ export default function ActionButtons({
   const isUnavailable = !isRunning;
 
   const controlUrl = (() => {
-    const gwUrl = `ws://${window.location.host}/api/v1/instances/${instance.id}/control/`;
+    const gwUrl = `ws://${window.location.host}/openclaw/${instance.id}/`;
     const params = new URLSearchParams({
       gatewayUrl: gwUrl,
       token: instance.gateway_token,
       session: "agent:main:main",
     });
-    return `/api/v1/instances/${instance.id}/control/?${params}`;
+    return `/openclaw/${instance.id}/?${params}`;
   })();
 
   const disabledLinkClass = "pointer-events-none opacity-30";

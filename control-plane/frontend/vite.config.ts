@@ -62,9 +62,10 @@ export default defineConfig({
       workbox: {
         globPatterns: ["**/*.{js,css,html,ico,png,svg,woff2}"],
         navigateFallback: "/index.html",
+        navigateFallbackDenylist: [/^\/api\//, /^\/health/, /^\/openclaw\//],
         runtimeCaching: [
           {
-            urlPattern: /^https?:\/\/.*\/api\//,
+            urlPattern: /^https?:\/\/.*\/(api|openclaw)\//,
             handler: "NetworkOnly",
           },
         ],
@@ -96,6 +97,12 @@ export default defineConfig({
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
         autoRewrite: true,
+      },
+      "/openclaw": {
+        target: "http://127.0.0.1:8000",
+        changeOrigin: true,
+        autoRewrite: true,
+        ws: true,
       },
     },
   },

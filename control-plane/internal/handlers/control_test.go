@@ -20,7 +20,7 @@ func TestControlProxy_InvalidID(t *testing.T) {
 	setupTestDB(t)
 
 	user := createTestUser(t, "admin")
-	req := buildRequest(t, "GET", "/api/v1/instances/notanumber/control/status", user, map[string]string{"id": "notanumber", "*": "status"})
+	req := buildRequest(t, "GET", "/openclaw/notanumber/status", user, map[string]string{"id": "notanumber", "*": "status"})
 	w := httptest.NewRecorder()
 
 	ControlProxy(w, req)
@@ -36,7 +36,7 @@ func TestControlProxy_Forbidden(t *testing.T) {
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "user") // non-admin, not assigned
 
-	req := buildRequest(t, "GET", "/api/v1/instances/1/control/status", user, map[string]string{
+	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/status", inst.ID), user, map[string]string{
 		"id": fmt.Sprintf("%d", inst.ID),
 		"*":  "status",
 	})
@@ -57,7 +57,7 @@ func TestControlProxy_NoTunnelManager(t *testing.T) {
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "admin")
 
-	req := buildRequest(t, "GET", "/api/v1/instances/1/control/status", user, map[string]string{
+	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/status", inst.ID), user, map[string]string{
 		"id": fmt.Sprintf("%d", inst.ID),
 		"*":  "status",
 	})
@@ -86,7 +86,7 @@ func TestControlProxy_NoActiveTunnel(t *testing.T) {
 	inst := createTestInstance(t, "bot-test", "Test")
 	user := createTestUser(t, "admin")
 
-	req := buildRequest(t, "GET", "/api/v1/instances/1/control/status", user, map[string]string{
+	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/status", inst.ID), user, map[string]string{
 		"id": fmt.Sprintf("%d", inst.ID),
 		"*":  "status",
 	})
@@ -164,7 +164,7 @@ func TestControlProxy_HTTPProxy(t *testing.T) {
 
 	user := createTestUser(t, "admin")
 
-	req := buildRequest(t, "GET", "/api/v1/instances/1/control/some/path?key=val", user, map[string]string{
+	req := buildRequest(t, "GET", fmt.Sprintf("/openclaw/%d/some/path?key=val", inst.ID), user, map[string]string{
 		"id": fmt.Sprintf("%d", inst.ID),
 		"*":  "some/path",
 	})

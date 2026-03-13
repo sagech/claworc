@@ -25,7 +25,7 @@ func (h *SPAHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/health" {
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/openclaw/") || r.URL.Path == "/health" {
 		http.NotFound(w, r)
 		return
 	}

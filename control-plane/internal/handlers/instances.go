@@ -293,7 +293,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		HasUserAgentOverride:  inst.UserAgent != "",
 		AllowedSourceIPs:      inst.AllowedSourceIPs,
 		EnabledProviders:      enabledProviders,
-		ControlURL:            fmt.Sprintf("/api/v1/instances/%d/control/", inst.ID),
+		ControlURL:            fmt.Sprintf("/openclaw/%d/", inst.ID),
 		GatewayToken:          gatewayToken,
 		SortOrder:             inst.SortOrder,
 		CreatedAt:             formatTimestamp(inst.CreatedAt),

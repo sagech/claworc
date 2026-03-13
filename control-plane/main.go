@@ -256,9 +256,6 @@ func main() {
 			// Desktop proxy (noVNC/websockify)
 			r.HandleFunc("/instances/{id}/desktop/*", handlers.DesktopProxy)
 
-			// Control proxy
-			r.HandleFunc("/instances/{id}/control/*", handlers.ControlProxy)
-
 			// Admin-only routes
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RequireAdmin)
@@ -306,6 +303,12 @@ func main() {
 				r.Post("/users/{userId}/reset-password", handlers.ResetUserPassword)
 			})
 		})
+	})
+
+	// OpenClaw control proxy (top-level, outside /api/v1/)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequireAuth(sessionStore))
+		r.HandleFunc("/openclaw/{id}/*", handlers.ControlProxy)
 	})
 
 	// SPA static files (embedded)
