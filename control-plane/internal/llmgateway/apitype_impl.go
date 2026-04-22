@@ -29,7 +29,7 @@ func (openAICompletions) ParseStreamingUsage(body []byte) (int, int, int) {
 }
 
 func (openAICompletions) ProbeURL(baseURL string) string {
-	return strings.TrimRight(baseURL, "/") + "/v1/models"
+	return strings.TrimRight(baseURL, "/") + "/models"
 }
 
 func (openAICompletions) ProbeHeaders(*http.Request) {}

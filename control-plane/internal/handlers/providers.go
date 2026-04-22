@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,10 +26,27 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Provider catalog proxy (claworc.com/providers API, 1-hour in-process cache)
+// Provider catalog (embedded built-in + optional remote source)
 // ---------------------------------------------------------------------------
 
-const catalogBaseURL = "https://claworc.com/providers"
+//go:embed catalog_embed.json
+var embeddedCatalog []byte
+
+const claworcCatalogURL = "https://claworc.com/providers"
+
+// getCatalogSourceFromQuery extracts source and custom URL from query parameters.
+// source: "builtin" (default), "claworc", or "custom"
+// url: only used when source is "custom"
+func getCatalogSourceFromQuery(r *http.Request) (source string, customURL string) {
+	source = r.URL.Query().Get("source")
+	if source == "" {
+		source = "builtin"
+	}
+	if source == "custom" {
+		customURL = r.URL.Query().Get("url")
+	}
+	return
+}
 
 type catalogCacheEntry struct {
 	body      []byte
@@ -73,13 +91,32 @@ func ssrfSafeDialContext(ctx context.Context, network, addr string) (net.Conn, e
 	return dialer.DialContext(ctx, network, net.JoinHostPort(host, port))
 }
 
-func proxyCatalog(w http.ResponseWriter, path string) {
+func proxyCatalog(w http.ResponseWriter, path string, r *http.Request) {
+	source, customURL := getCatalogSourceFromQuery(r)
+
+	// Built-in: serve embedded catalog directly (no caching needed)
+	if source == "builtin" {
+		if path != "/" {
+			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(embeddedCatalog)
+		return
+	}
+
+	// Remote (claworc or custom): use cached proxy
+	remoteURL := claworcCatalogURL
+	if source == "custom" && customURL != "" {
+		remoteURL = customURL
+	}
+
 	catalogCacheMu.RLock()
 	entry := catalogCache[path]
 	catalogCacheMu.RUnlock()
 
 	if entry == nil || time.Now().After(entry.expiresAt) {
-		resp, err := catalogHTTPClient.Get(catalogBaseURL + path)
+		resp, err := catalogHTTPClient.Get(remoteURL + path)
 		if err != nil {
 			log.Printf("catalog proxy: fetch %s: %v", utils.SanitizeForLog(path), err)
 			http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
@@ -110,13 +147,14 @@ func proxyCatalog(w http.ResponseWriter, path string) {
 
 // GetCatalogProviders proxies GET /providers/ from the catalog API.
 func GetCatalogProviders(w http.ResponseWriter, r *http.Request) {
-	proxyCatalog(w, "/")
+	proxyCatalog(w, "/", r)
 }
 
 // GetCatalogProviderDetail derives a single provider from the cached root catalog.
 func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
 	key := strings.ToLower(chi.URLParam(r, "key"))
-	entry, err := getCatalogEntryByKey(key)
+	source, customURL := getCatalogSourceFromQuery(r)
+	entry, err := getCatalogEntryByKey(key, source, customURL)
 	if err != nil {
 		http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
 		return
@@ -132,8 +170,8 @@ func GetCatalogProviderDetail(w http.ResponseWriter, r *http.Request) {
 
 // getCatalogEntryByKey looks up a provider by key from the cached root catalog.
 // Returns nil, nil if the key is not found. Returns nil, err on fetch failure.
-func getCatalogEntryByKey(key string) (*catalogRootEntry, error) {
-	entries, err := ensureRootCatalog()
+func getCatalogEntryByKey(key, source, customURL string) (*catalogRootEntry, error) {
+	entries, err := ensureRootCatalog(source, customURL)
 	if err != nil {
 		return nil, err
 	}
@@ -146,14 +184,22 @@ func getCatalogEntryByKey(key string) (*catalogRootEntry, error) {
 }
 
 // ensureRootCatalog returns parsed root catalog entries, using cache if valid.
-func ensureRootCatalog() ([]catalogRootEntry, error) {
+func ensureRootCatalog(source, customURL string) ([]catalogRootEntry, error) {
+	if source == "builtin" {
+		var entries []catalogRootEntry
+		if err := json.Unmarshal(embeddedCatalog, &entries); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+
 	catalogCacheMu.RLock()
 	entry := catalogCache["/"]
 	catalogCacheMu.RUnlock()
 
 	if entry == nil || time.Now().After(entry.expiresAt) {
 		// Fetch and cache
-		return getCatalogRoot()
+		return getCatalogRoot(source, customURL)
 	}
 	var entries []catalogRootEntry
 	if err := json.Unmarshal(entry.body, &entries); err != nil {
@@ -210,12 +256,26 @@ func catalogModelToProviderModel(m catalogRootModel) database.ProviderModel {
 
 // getCatalogRoot force-refreshes the "/" cache entry, fetches the full catalog root,
 // stores raw bytes in the cache, and returns the parsed entries.
-func getCatalogRoot() ([]catalogRootEntry, error) {
+func getCatalogRoot(source, customURL string) ([]catalogRootEntry, error) {
+	if source == "builtin" {
+		var entries []catalogRootEntry
+		if err := json.Unmarshal(embeddedCatalog, &entries); err != nil {
+			return nil, err
+		}
+		return entries, nil
+	}
+
+	// Remote: fetch from configured URL
+	remoteURL := claworcCatalogURL
+	if source == "custom" && customURL != "" {
+		remoteURL = customURL
+	}
+
 	catalogCacheMu.Lock()
 	delete(catalogCache, "/")
 	catalogCacheMu.Unlock()
 
-	resp, err := catalogHTTPClient.Get(catalogBaseURL + "/")
+	resp, err := catalogHTTPClient.Get(remoteURL + "/")
 	if err != nil {
 		return nil, err
 	}
@@ -245,7 +305,7 @@ var getCatalogModels = func(catalogKey string) []database.ProviderModel {
 	if catalogKey == "" {
 		return nil
 	}
-	entry, err := getCatalogEntryByKey(strings.ToLower(catalogKey))
+	entry, err := getCatalogEntryByKey(strings.ToLower(catalogKey), "builtin", "")
 	if err != nil || entry == nil {
 		if err != nil {
 			log.Printf("getCatalogModels: %s: %v", utils.SanitizeForLog(catalogKey), err)
@@ -640,7 +700,7 @@ type syncAllResp struct {
 }
 
 func SyncAllProviderModels(w http.ResponseWriter, r *http.Request) {
-	catalogEntries, err := getCatalogRoot()
+	catalogEntries, err := getCatalogRoot("builtin", "")
 	if err != nil {
 		log.Printf("SyncAllProviderModels: fetch catalog root: %v", err)
 		writeError(w, http.StatusBadGateway, "Failed to fetch provider catalog")
