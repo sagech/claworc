@@ -50,6 +50,7 @@ export default function ProviderModal({
   const [mCatalogSource, setMCatalogSource] = useState("builtin");
   const [mCatalogUrl, setMCatalogUrl] = useState("");
   const { data: catalogProviders = [], isLoading: catalogLoading } = useCatalogProviders(mCatalogSource, mCatalogUrl);
+  const customUrlMissing = mCatalogSource === "custom" && !mCatalogUrl.trim();
 
   const [mCatalogKey, setMCatalogKey] = useState("");
   const [mProvider, setMProvider] = useState("");
@@ -101,6 +102,8 @@ export default function ProviderModal({
     createProviderMutation.reset();
     updateProviderMutation.reset();
     deleteProviderMutation.reset();
+    setMCatalogSource("builtin");
+    setMCatalogUrl("");
     if (mode === "create") {
       setMCatalogKey("");
       setMProvider("");
@@ -352,6 +355,9 @@ export default function ProviderModal({
               </div>
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Provider</label>
+              {customUrlMissing ? (
+                <p className="text-sm text-gray-400 italic py-1.5">Enter a catalog URL above to load providers</p>
+              ) : (
               <select
                 value={mCatalogKey}
                 onChange={(e) => handleCatalogKeyChange(e.target.value)}
@@ -368,6 +374,7 @@ export default function ProviderModal({
                 ))}
                 <option value={CUSTOM_PROVIDER}>Custom (self-hosted / unlisted)</option>
               </select>
+              )}
             </div>
             </>
           )}

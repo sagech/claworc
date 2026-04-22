@@ -105,18 +105,31 @@ func proxyCatalog(w http.ResponseWriter, path string, r *http.Request) {
 		return
 	}
 
+	// Custom with empty URL: reject
+	if source == "custom" && customURL == "" {
+		http.Error(w, `{"error":"custom catalog URL is required"}`, http.StatusBadRequest)
+		return
+	}
+
 	// Remote (claworc or custom): use cached proxy
 	remoteURL := claworcCatalogURL
-	if source == "custom" && customURL != "" {
+	if source == "custom" {
 		remoteURL = customURL
 	}
 
+	cacheKey := source + ":" + customURL + ":" + path
+
 	catalogCacheMu.RLock()
-	entry := catalogCache[path]
+	entry := catalogCache[cacheKey]
 	catalogCacheMu.RUnlock()
 
 	if entry == nil || time.Now().After(entry.expiresAt) {
-		resp, err := catalogHTTPClient.Get(remoteURL + path)
+		// Use SSRF-safe client for user-provided URLs; catalogHTTPClient for trusted claworc.com
+		client := catalogHTTPClient
+		if source == "custom" {
+			client = providerProbeClient
+		}
+		resp, err := client.Get(remoteURL + path)
 		if err != nil {
 			log.Printf("catalog proxy: fetch %s: %v", utils.SanitizeForLog(path), err)
 			http.Error(w, `{"error":"catalog unavailable"}`, http.StatusBadGateway)
@@ -136,7 +149,7 @@ func proxyCatalog(w http.ResponseWriter, path string, r *http.Request) {
 		}
 		newEntry := &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
 		catalogCacheMu.Lock()
-		catalogCache[path] = newEntry
+		catalogCache[cacheKey] = newEntry
 		catalogCacheMu.Unlock()
 		entry = newEntry
 	}
@@ -193,8 +206,9 @@ func ensureRootCatalog(source, customURL string) ([]catalogRootEntry, error) {
 		return entries, nil
 	}
 
+	cacheKey := source + ":" + customURL + ":/"
 	catalogCacheMu.RLock()
-	entry := catalogCache["/"]
+	entry := catalogCache[cacheKey]
 	catalogCacheMu.RUnlock()
 
 	if entry == nil || time.Now().After(entry.expiresAt) {
@@ -267,15 +281,22 @@ func getCatalogRoot(source, customURL string) ([]catalogRootEntry, error) {
 
 	// Remote: fetch from configured URL
 	remoteURL := claworcCatalogURL
-	if source == "custom" && customURL != "" {
+	if source == "custom" {
 		remoteURL = customURL
 	}
 
+	cacheKey := source + ":" + customURL + ":/"
+
 	catalogCacheMu.Lock()
-	delete(catalogCache, "/")
+	delete(catalogCache, cacheKey)
 	catalogCacheMu.Unlock()
 
-	resp, err := catalogHTTPClient.Get(remoteURL + "/")
+	// Use SSRF-safe client for user-provided URLs; catalogHTTPClient for trusted claworc.com
+	client := catalogHTTPClient
+	if source == "custom" {
+		client = providerProbeClient
+	}
+	resp, err := client.Get(remoteURL + "/")
 	if err != nil {
 		return nil, err
 	}
@@ -289,7 +310,7 @@ func getCatalogRoot(source, customURL string) ([]catalogRootEntry, error) {
 	}
 	entry := &catalogCacheEntry{body: body, expiresAt: time.Now().Add(time.Hour)}
 	catalogCacheMu.Lock()
-	catalogCache["/"] = entry
+	catalogCache[cacheKey] = entry
 	catalogCacheMu.Unlock()
 
 	var entries []catalogRootEntry
@@ -656,11 +677,6 @@ func SyncProviderModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Custom providers have no catalog to sync from")
 		return
 	}
-
-	// Force-refresh the root catalog cache
-	catalogCacheMu.Lock()
-	delete(catalogCache, "/")
-	catalogCacheMu.Unlock()
 
 	log.Printf("Syncing models for provider %d (%s)", p.ID, p.Provider)
 	models := getCatalogModels(p.Provider)
