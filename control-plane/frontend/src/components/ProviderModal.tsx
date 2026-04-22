@@ -52,6 +52,10 @@ export default function ProviderModal({
   const { data: catalogProviders = [], isLoading: catalogLoading } = useCatalogProviders(mCatalogSource, mCatalogUrl);
   const customUrlMissing = mCatalogSource === "custom" && !mCatalogUrl.trim();
 
+  const catalogIconMap = Object.fromEntries(
+    catalogProviders.map((c) => [c.name, c.icon_key]).filter(([, v]) => v)
+  );
+
   const [mCatalogKey, setMCatalogKey] = useState("");
   const [mProvider, setMProvider] = useState("");
   const [mName, setMName] = useState("");
@@ -312,10 +316,10 @@ export default function ProviderModal({
       <div className={`bg-white rounded-lg shadow-xl p-6 w-full mx-4 ${isCustomProvider ? "max-w-xl" : "max-w-md"}`}>
         <h2 className="text-base font-semibold text-gray-900 mb-4 flex items-center gap-2">
           {mode === "edit" && provider!.provider && (
-            <ProviderIcon provider={provider!.provider} size={22} />
+            <ProviderIcon provider={catalogIconMap[provider!.provider] ?? provider!.provider} size={22} />
           )}
           {mode === "create" && mCatalogKey && mCatalogKey !== CUSTOM_PROVIDER && (
-            <ProviderIcon provider={mCatalogKey} size={22} />
+            <ProviderIcon provider={catalogIconMap[mCatalogKey] ?? mCatalogKey} size={22} />
           )}
           {mode === "create" ? "Add Provider" : "Edit Provider"}
           {instanceId && (
