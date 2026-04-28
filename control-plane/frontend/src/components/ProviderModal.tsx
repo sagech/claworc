@@ -2,7 +2,7 @@ import { createElement, useState, useEffect } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import ProviderIcon from "@/components/ProviderIcon";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail } from "@/hooks/useProviders";
+import { useCreateProvider, useUpdateProvider, useDeleteProvider, useCatalogProviders, useCatalogProviderDetail, useCatalogIconMap } from "@/hooks/useProviders";
 import { syncAllProviders, testProviderKey } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
 import toast from "react-hot-toast";
@@ -47,9 +47,7 @@ export default function ProviderModal({
   const updateProviderMutation = useUpdateProvider();
   const deleteProviderMutation = useDeleteProvider();
   const { data: catalogProviders = [], isLoading: catalogLoading, isFetching: catalogFetching } = useCatalogProviders();
-  const catalogIconMap = Object.fromEntries(
-    catalogProviders.map((c) => [c.name, c.icon_key]).filter(([, v]) => v)
-  );
+  const catalogIconMap = useCatalogIconMap();
   const [syncingCatalog, setSyncingCatalog] = useState(false);
 
   const [mCatalogKey, setMCatalogKey] = useState("");

@@ -6,7 +6,7 @@ import EnvVarsEditor from "@/components/EnvVarsEditor";
 import StickyActionBar from "@/components/StickyActionBar";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSettings, useUpdateSettings } from "@/hooks/useSettings";
-import { useProviders, useCatalogProviders } from "@/hooks/useProviders";
+import { useProviders, useCatalogIconMap } from "@/hooks/useProviders";
 import { fetchSSHFingerprint, rotateSSHKey } from "@/api/ssh";
 import { syncAllProviders } from "@/api/llm";
 import { successToast, errorToast } from "@/utils/toast";
@@ -19,10 +19,7 @@ export default function SettingsPage() {
   const { data: settings, isLoading } = useSettings();
   const updateMutation = useUpdateSettings();
   const { data: providers = [] } = useProviders();
-  const { data: catalogProviders = [] } = useCatalogProviders();
-  const catalogIconMap = Object.fromEntries(
-    catalogProviders.map((c) => [c.name, c.icon_key]).filter(([, v]) => v)
-  );
+  const catalogIconMap = useCatalogIconMap();
 
   // Provider modal state
   const [modalOpen, setModalOpen] = useState(false);
