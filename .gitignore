@@ -29,6 +29,7 @@ control-plane/main
 
 test-results/
 playwright-report/
+e2e/.shared-instance.json
 
 /control-plane/pkg/
 /control-plane/claworc
