@@ -26,24 +26,25 @@ HELM_NAMESPACE := claworc
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
-	worker-deploy worker-test site-dev site-build site-deploy
+	worker-deploy worker-test site-dev site-build site-deploy \
+	e2e e2e-debug e2e-install
 
 agent: agent-base agent-push
 
 agent-base:
 	@echo "Building and pushing browser-base image..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(BROWSER_BASE_IMAGE):$(TAG) -f agent/Dockerfile.browser-base --push agent/
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(BROWSER_BASE_IMAGE):$(TAG) -f agent/browser/Dockerfile.base --push agent/browser/
 
 agent-base-china:
 	@echo "Building and pushing browser-base image (China mirrors)..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg USE_CHINA_MIRRORS=true -t $(BROWSER_BASE_IMAGE):$(TAG) -f agent/Dockerfile.browser-base --push agent/
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg USE_CHINA_MIRRORS=true -t $(BROWSER_BASE_IMAGE):$(TAG) -f agent/browser/Dockerfile.base --push agent/browser/
 
 agent-build:
 	@echo "Building images locally (agent + browser variants)..."
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/Dockerfile.agent --load agent/
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/Dockerfile.browser-chromium --load agent/
-	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/Dockerfile.browser-chrome --load agent/
-	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.browser-brave --load agent/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --load agent/instance/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --load agent/browser/
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --load agent/browser/
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --load agent/browser/
 
 agent-test:
 	cd agent/tests && AGENT_TEST_IMAGE=$(BROWSER_CHROMIUM_IMAGE):$(TAG) \
@@ -54,10 +55,10 @@ agent-test:
 
 agent-push:
 	@echo "Pushing all agent + browser images in parallel..."
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/Dockerfile.agent --push agent/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/Dockerfile.browser-chromium --push agent/ & \
-	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/Dockerfile.browser-chrome --push agent/ & \
-	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/Dockerfile.browser-brave --push agent/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) -t $(AGENT_IMAGE):$(TAG) -f agent/instance/Dockerfile --push agent/instance/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROMIUM_IMAGE):$(TAG) -f agent/browser/Dockerfile.chromium --push agent/browser/ & \
+	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
 	wait
 
 AGENT_CONTAINER := claworc-agent-exec
@@ -132,19 +133,25 @@ dev:
 	CLAWORC_AUTH_DISABLED=true CLAWORC_LLM_RESPONSE_LOG=$(CURDIR)/llm-responses.log goreman -set-ports=false start
 
 ssh-integration-test:
-	docker build -f agent/Dockerfile.agent -t claworc-agent:local agent/
+	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
 	cd control-plane && go test -tags docker_integration -v -timeout 300s ./internal/sshproxy/ -run TestIntegration
 
 ssh-file-integration-test:
-	docker build -f agent/Dockerfile.agent -t claworc-agent:local agent/
+	docker build -f agent/instance/Dockerfile -t claworc-agent:local agent/instance/
 	cd agent/tests && npm run test:ssh -- --testPathPattern file.test
 
 test-integration-backend:
 	cd control-plane && CLAWORC_LLM_GATEWAY_PORT=40001 go test -tags docker_integration -v -timeout 600s -count=1 \
 		./internal/handlers/ -run TestIntegration
 
-e2e-docker-tests:
-	./scripts/run_tests.sh
+e2e-install:
+	cd e2e && npm install && npx playwright install --with-deps chromium
+
+e2e:
+	./e2e/run.sh $(KUBECONFIG)
+
+e2e-debug:
+	E2E_KEEP=1 ./e2e/run.sh $(KUBECONFIG)
 
 test:
 	cd control-plane && go test ./internal/...

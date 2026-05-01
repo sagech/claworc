@@ -1530,8 +1530,10 @@ func DeleteInstance(w http.ResponseWriter, r *http.Request) {
 		// Tear down the on-demand browser pod first so its container/volume
 		// don't outlive the agent. Best-effort: a failure here shouldn't
 		// block the agent cleanup or DB delete.
-		if err := orch.DeleteBrowserPod(r.Context(), inst.ID); err != nil {
-			log.Printf("Failed to delete browser pod for %s: %v", utils.SanitizeForLog(inst.Name), err)
+		if BrowserAdmin != nil {
+			if err := BrowserAdmin.DeleteBrowserPod(r.Context(), inst.ID); err != nil {
+				log.Printf("Failed to delete browser pod for %s: %v", utils.SanitizeForLog(inst.Name), err)
+			}
 		}
 		if err := orch.DeleteInstance(r.Context(), inst.Name); err != nil {
 			log.Printf("Failed to delete container resources for %s – proceeding with DB cleanup: %v", utils.SanitizeForLog(inst.Name), err)
@@ -1870,6 +1872,22 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 		inst.BrowserActive = false
 	}
 
+	// Inherit shared folder memberships from the source so the clone mounts
+	// the same shared volumes. Best-effort: log and continue on failure rather
+	// than aborting the clone.
+	if folders, ferr := database.GetSharedFoldersForInstance(src.ID); ferr != nil {
+		log.Printf("clone %d: read source shared folders: %v", inst.ID, ferr)
+	} else {
+		for _, sf := range folders {
+			ids := append(database.ParseSharedFolderInstanceIDs(sf.InstanceIDs), inst.ID)
+			if uerr := database.UpdateSharedFolder(sf.ID, map[string]interface{}{
+				"instance_ids": database.EncodeSharedFolderInstanceIDs(ids),
+			}); uerr != nil {
+				log.Printf("clone %d: attach shared folder %d: %v", inst.ID, sf.ID, uerr)
+			}
+		}
+	}
+
 	// Run the full clone operation asynchronously. The task is cancellable:
 	// hitting POST /api/v1/tasks/{id}/cancel cancels the Run context (so
 	// in-flight orchestrator calls abort) and then runs the OnCancel
@@ -1931,8 +1949,10 @@ func CloneInstance(w http.ResponseWriter, r *http.Request) {
 			// Clone the on-demand browser profile volume too, so Chrome cookies,
 			// sessions, and persisted state follow the clone. Best-effort: if the
 			// source never launched a browser there's nothing to copy.
-			if err := orch.CloneBrowserVolume(ctx, src.Name, cloneName); err != nil {
-				log.Printf("Failed to clone browser volume from %s to %s: %v", src.Name, cloneName, err)
+			if BrowserAdmin != nil {
+				if err := BrowserAdmin.CloneBrowserVolume(ctx, src.Name, cloneName); err != nil {
+					log.Printf("Failed to clone browser volume from %s to %s: %v", src.Name, cloneName, err)
+				}
 			}
 
 			clearStatusMessage(inst.ID)
@@ -1976,10 +1996,12 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 				log.Printf("clone-cancel: stop tunnels for %d: %v", instanceID, err)
 			}
 		}
-		if orch := orchestrator.Get(); orch != nil {
-			if err := orch.DeleteBrowserPod(ctx, instanceID); err != nil {
+		if BrowserAdmin != nil {
+			if err := BrowserAdmin.DeleteBrowserPod(ctx, instanceID); err != nil {
 				log.Printf("clone-cancel: delete browser pod for %s: %v", utils.SanitizeForLog(cloneName), err)
 			}
+		}
+		if orch := orchestrator.Get(); orch != nil {
 			if err := orch.DeleteInstance(ctx, cloneName); err != nil {
 				log.Printf("clone-cancel: delete container for %s: %v", utils.SanitizeForLog(cloneName), err)
 			}
@@ -1991,6 +2013,23 @@ func cloneOnCancel(instanceID uint, cloneName string) taskmanager.OnCancel {
 		// teardown in DeleteInstance so a canceled clone leaves no rows behind.
 		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMProvider{})
 		database.DB.Where("instance_id = ?", instanceID).Delete(&database.LLMGatewayKey{})
+		// Detach the cancelled clone from any shared folders it inherited so
+		// no dangling reference is left behind after the row is deleted.
+		if folders, ferr := database.GetSharedFoldersForInstance(instanceID); ferr == nil {
+			for _, sf := range folders {
+				kept := make([]uint, 0)
+				for _, id := range database.ParseSharedFolderInstanceIDs(sf.InstanceIDs) {
+					if id != instanceID {
+						kept = append(kept, id)
+					}
+				}
+				if uerr := database.UpdateSharedFolder(sf.ID, map[string]interface{}{
+					"instance_ids": database.EncodeSharedFolderInstanceIDs(kept),
+				}); uerr != nil {
+					log.Printf("clone-cancel: detach shared folder %d from %d: %v", sf.ID, instanceID, uerr)
+				}
+			}
+		}
 		database.DB.Delete(&database.Instance{}, instanceID)
 		clearStatusMessage(instanceID)
 	}
