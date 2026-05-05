@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { exec, execAsUser, sleep, getContainers, hasCommand, dumpDiagnostics } from "./helpers";
+import { exec, execAsUser, sleep, getContainers, dumpDiagnostics } from "./helpers";
 
 const containers = getContainers();
 // openclaw lives in the claworc-agent image only. Browser-only images
-// (claworc-browser-*) don't ship the gateway, so this suite must skip
-// against them. Capability-probe the chromium container at module load.
-const chromiumName = containers.chromium?.name;
-const container = chromiumName && hasCommand(chromiumName, "openclaw") ? chromiumName : undefined;
+// (claworc-browser-*) don't ship the gateway, so this suite runs against
+// the dedicated `agent` container launched by global-setup.ts when the
+// instance image is available locally.
+const container = containers.agent?.name;
 
 function structureOf(obj: any): any {
   if (Array.isArray(obj)) return obj.length > 0 ? [structureOf(obj[0])] : [];
@@ -151,5 +151,40 @@ describe.skipIf(!container)("agent image", { timeout: 300_000 }, () => {
   it("openclaw gateway stop exits without crash", () => {
     const result = execAsUser(container!, "openclaw gateway stop");
     expect(result.exitCode).toBeDefined();
+  });
+
+  // Regression for https://github.com/gluk-w/claworc/issues/127. sharp is a
+  // native addon (libvips) used by openclaw's image pipeline (Telegram,
+  // screenshots). It silently went missing when sharp 0.34 switched to
+  // prebuilt binaries that need libvips on the system.
+  describe("sharp image dependency (issue #127)", () => {
+    const cdOpenclaw = 'cd "$(npm root -g)/openclaw"';
+
+    it("openclaw still declares sharp as a build dependency", () => {
+      // If upstream openclaw drops sharp, the runtime check below loses its
+      // meaning — surface that change so we can revisit the Dockerfile.
+      // openclaw lists sharp under pnpm's `onlyBuiltDependencies` rather
+      // than `dependencies`/`optional`/`peer`, so check all four locations.
+      const result = exec(container!, [
+        "bash",
+        "-c",
+        `${cdOpenclaw} && node -e "const p=require('./package.json'); const inField=(o)=>o&&(o.sharp||(Array.isArray(o)&&o.includes('sharp'))); const found=inField(p.dependencies)||inField(p.optionalDependencies)||inField(p.peerDependencies)||inField(p.pnpm&&p.pnpm.onlyBuiltDependencies); if(!found){process.exit(2)} console.log('ok')"`,
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toBe("ok");
+    });
+
+    it("openclaw can load sharp for image processing", () => {
+      // Resolve sharp the same way openclaw does at runtime — from its own
+      // node_modules — so this fails loudly if libvips is missing or the
+      // native binding didn't get built.
+      const result = exec(container!, [
+        "bash",
+        "-c",
+        `${cdOpenclaw} && node -e "console.log(require('sharp').versions.sharp)"`,
+      ]);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    });
   });
 });
