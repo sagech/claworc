@@ -122,6 +122,7 @@ type instanceCreateRequest struct {
 	BrowserImage       *string           `json:"browser_image"`
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"`
 	BrowserStorage     *string           `json:"browser_storage"`
+	TeamID             *uint             `json:"team_id"`
 }
 
 type modelsResponse struct {
@@ -172,6 +173,7 @@ type instanceResponse struct {
 	BrowserIdleMinutes    *int              `json:"browser_idle_minutes,omitempty"`
 	BrowserStorage        string            `json:"browser_storage,omitempty"`
 	BrowserActive         bool              `json:"browser_active"`
+	TeamID                uint              `json:"team_id"`
 }
 
 func generateName(displayName string) string {
@@ -381,11 +383,39 @@ func parseEnabledProviders(raw string) []uint {
 }
 
 // allProviderIDsForInstance returns the union of global enabled provider IDs
-// and instance-specific provider IDs.
+// and instance-specific provider IDs. Global providers are filtered through
+// the instance's team provider whitelist when one is configured: only
+// providers whitelisted for the team flow through. An empty whitelist for
+// the team means "no restriction" (all enabled globals pass).
 func allProviderIDsForInstance(instID uint, globalEnabledIDs []uint) []uint {
+	var inst database.Instance
+	if err := database.DB.First(&inst, instID).Error; err != nil {
+		return concatUniqueProviderIDs(instID, globalEnabledIDs)
+	}
+	allowed := globalEnabledIDs
+	if inst.TeamID != 0 {
+		whitelist, err := database.GetTeamProviderIDs(inst.TeamID)
+		if err == nil && len(whitelist) > 0 {
+			whiteset := make(map[uint]struct{}, len(whitelist))
+			for _, id := range whitelist {
+				whiteset[id] = struct{}{}
+			}
+			filtered := make([]uint, 0, len(globalEnabledIDs))
+			for _, id := range globalEnabledIDs {
+				if _, ok := whiteset[id]; ok {
+					filtered = append(filtered, id)
+				}
+			}
+			allowed = filtered
+		}
+	}
+	return concatUniqueProviderIDs(instID, allowed)
+}
+
+func concatUniqueProviderIDs(instID uint, globalIDs []uint) []uint {
 	var instProviders []database.LLMProvider
 	database.DB.Where("instance_id = ?", instID).Select("id").Find(&instProviders)
-	all := append([]uint{}, globalEnabledIDs...)
+	all := append([]uint{}, globalIDs...)
 	for _, p := range instProviders {
 		all = append(all, p.ID)
 	}
@@ -468,6 +498,7 @@ func instanceToResponse(inst database.Instance, status string) instanceResponse 
 		BrowserIdleMinutes:    inst.BrowserIdleMinutes,
 		BrowserStorage:        inst.BrowserStorage,
 		BrowserActive:         inst.BrowserActive,
+		TeamID:                inst.TeamID,
 	}
 }
 
@@ -659,14 +690,24 @@ func ListInstances(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r)
 
 	query := database.DB.Order("sort_order ASC, id ASC")
+
+	// Optional ?team_id=N filter, applied for both admins and non-admins.
+	if v := r.URL.Query().Get("team_id"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			query = query.Where("team_id = ?", uint(n))
+		}
+	}
+
 	if user != nil && user.Role != "admin" {
-		// Non-admin users only see assigned instances
-		assignedIDs, err := database.GetUserInstances(user.ID)
-		if err != nil || len(assignedIDs) == 0 {
+		// Non-admins see the union of (a) all instances of teams they
+		// manage, and (b) instances explicitly assigned via UserInstance
+		// inside teams where they are a regular user.
+		accessible, err := database.AccessibleInstanceIDs(user.ID)
+		if err != nil || len(accessible) == 0 {
 			writeJSON(w, http.StatusOK, []instanceResponse{})
 			return
 		}
-		query = query.Where("id IN ?", assignedIDs)
+		query = query.Where("id IN ?", accessible)
 	}
 
 	if err := query.Find(&instances).Error; err != nil {
@@ -699,6 +740,27 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 	if body.DisplayName == "" {
 		writeError(w, http.StatusBadRequest, "display_name is required")
 		return
+	}
+
+	// Target team must be specified. Non-admins must be a manager of it.
+	caller := middleware.GetUser(r)
+	var teamID uint
+	if body.TeamID != nil && *body.TeamID > 0 {
+		teamID = *body.TeamID
+	}
+	if teamID == 0 {
+		writeError(w, http.StatusBadRequest, "team_id is required")
+		return
+	}
+	if _, err := database.GetTeam(teamID); err != nil {
+		writeError(w, http.StatusBadRequest, "Unknown team")
+		return
+	}
+	if caller != nil && caller.Role != "admin" {
+		if !database.IsTeamManager(caller.ID, teamID) {
+			writeError(w, http.StatusForbidden, "You must be a manager of the target team to create instances")
+			return
+		}
 	}
 
 	// Set defaults: prefer the configured global default for each resource,
@@ -864,6 +926,7 @@ func CreateInstance(w http.ResponseWriter, r *http.Request) {
 		BrowserImage:       browserImage,
 		BrowserIdleMinutes: browserIdleMinutes,
 		BrowserStorage:     browserStorage,
+		TeamID:             teamID,
 	}
 
 	if err := database.DB.Create(&inst).Error; err != nil {
@@ -1055,6 +1118,7 @@ type instanceUpdateRequest struct {
 	BrowserImage       *string           `json:"browser_image"`        // non-legacy only
 	BrowserIdleMinutes *int              `json:"browser_idle_minutes"` // non-legacy only; null = global default
 	BrowserStorage     *string           `json:"browser_storage"`      // non-legacy only
+	TeamID             *uint             `json:"team_id"`              // admin or manager of both source+target
 }
 
 func UpdateInstance(w http.ResponseWriter, r *http.Request) {
@@ -1079,6 +1143,32 @@ func UpdateInstance(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request body")
 		return
+	}
+
+	// Reassign team. Admins always allowed; non-admins must be a manager
+	// of both the current team and the target team.
+	if body.TeamID != nil && *body.TeamID > 0 && *body.TeamID != inst.TeamID {
+		caller := middleware.GetUser(r)
+		if caller == nil {
+			writeError(w, http.StatusUnauthorized, "Authentication required")
+			return
+		}
+		newTeamID := *body.TeamID
+		if _, err := database.GetTeam(newTeamID); err != nil {
+			writeError(w, http.StatusBadRequest, "Unknown team")
+			return
+		}
+		if caller.Role != "admin" {
+			if !database.IsTeamManager(caller.ID, inst.TeamID) || !database.IsTeamManager(caller.ID, newTeamID) {
+				writeError(w, http.StatusForbidden, "You must be a manager of both the current and target teams to reassign")
+				return
+			}
+		}
+		if err := database.DB.Model(&inst).Update("team_id", newTeamID).Error; err != nil {
+			writeError(w, http.StatusInternalServerError, "Failed to reassign team")
+			return
+		}
+		inst.TeamID = newTeamID
 	}
 
 	// Update Brave API key
@@ -1350,7 +1440,7 @@ func GetInstanceStats(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -1389,7 +1479,7 @@ func UpdateInstanceImage(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -1547,8 +1637,8 @@ func StartInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !middleware.CanAccessInstance(r, inst.ID) {
-		writeError(w, http.StatusForbidden, "Access denied")
+	if !middleware.CanMutateInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Only admins or team managers can start instances")
 		return
 	}
 
@@ -1579,8 +1669,8 @@ func StopInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !middleware.CanAccessInstance(r, inst.ID) {
-		writeError(w, http.StatusForbidden, "Access denied")
+	if !middleware.CanMutateInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Only admins or team managers can stop instances")
 		return
 	}
 
@@ -1621,8 +1711,8 @@ func RestartInstance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !middleware.CanAccessInstance(r, inst.ID) {
-		writeError(w, http.StatusForbidden, "Access denied")
+	if !middleware.CanMutateInstance(r, inst.ID) {
+		writeError(w, http.StatusForbidden, "Only admins or team managers can restart instances")
 		return
 	}
 
@@ -1676,7 +1766,7 @@ func GetInstanceConfig(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 
@@ -1740,7 +1830,7 @@ func UpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
 
 	orch := orchestrator.Get()
 	if orch == nil {
-		writeError(w, http.StatusServiceUnavailable, "No orchestrator available")
+		WriteOrchestratorUnavailable(w)
 		return
 	}
 

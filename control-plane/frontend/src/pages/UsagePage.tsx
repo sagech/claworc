@@ -1,5 +1,9 @@
+import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useUsageStats, useResetUsageLogs } from "@/hooks/useProviders";
+import InstanceTeamPicker, {
+  type SingleSelection,
+} from "@/components/InstanceTeamPicker";
 import {
   ResponsiveContainer,
   AreaChart,
@@ -40,6 +44,7 @@ export default function UsagePage() {
   const endDate = searchParams.get("end") ?? today();
   const instanceId = searchParams.get("instance") ? Number(searchParams.get("instance")) : undefined;
   const providerId = searchParams.get("provider") ? Number(searchParams.get("provider")) : undefined;
+  const teamId = searchParams.get("team") ? Number(searchParams.get("team")) : undefined;
 
   function updateParams(updates: Record<string, string | undefined>) {
     setSearchParams((prev) => {
@@ -59,7 +64,26 @@ export default function UsagePage() {
     end_date: endDate,
     instance_id: instanceId,
     provider_id: providerId,
+    team_id: teamId,
   });
+
+  const pickerInstances = stats?.instances ?? [];
+  const pickerTeams = stats?.teams ?? [];
+  const pickerSelected: SingleSelection = teamId
+    ? { kind: "team", teamId }
+    : instanceId
+      ? { kind: "instance", instanceId }
+      : { kind: "all" };
+
+  const handlePickerChange = (sel: SingleSelection) => {
+    if (sel.kind === "all") {
+      updateParams({ instance: undefined, team: undefined });
+    } else if (sel.kind === "team") {
+      updateParams({ team: String(sel.teamId), instance: undefined });
+    } else {
+      updateParams({ instance: String(sel.instanceId), team: undefined });
+    }
+  };
 
   const granularity = stats?.granularity ?? "day";
 
@@ -85,8 +109,10 @@ export default function UsagePage() {
   const byModel = (stats?.by_model ?? []).slice(0, 10);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <h1 className="text-2xl font-semibold text-gray-900">AI Usage</h1>
+    <div>
+      <h1 className="text-xl font-semibold text-gray-900 mb-6">AI Usage</h1>
+
+      <div className="space-y-6">
 
       {/* Filters */}
       <div className="flex flex-wrap items-end gap-4 bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
@@ -112,18 +138,13 @@ export default function UsagePage() {
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-500">Instance</label>
-          <select
-            value={instanceId ?? ""}
-            onChange={(e) => updateParams({ instance: e.target.value || undefined })}
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All instances</option>
-            {(stats?.instances ?? []).map((inst) => (
-              <option key={inst.id} value={inst.id}>
-                {inst.display_name || inst.name}
-              </option>
-            ))}
-          </select>
+          <InstanceTeamPicker
+            mode="single"
+            instances={pickerInstances}
+            teams={pickerTeams}
+            selected={pickerSelected}
+            onChange={handlePickerChange}
+          />
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium text-gray-500">Provider</label>
@@ -325,6 +346,7 @@ export default function UsagePage() {
           </div>
         </>
       )}
+      </div>
     </div>
   );
 }

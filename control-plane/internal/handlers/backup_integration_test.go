@@ -22,6 +22,7 @@ func TestIntegration_BackupLifecycle(t *testing.T) {
 	displayName := fmt.Sprintf("backup-test-%d", time.Now().UnixNano())
 	instBody, _ := json.Marshal(map[string]interface{}{
 		"display_name": displayName,
+		"team_id":      1,
 	})
 	resp, err := client.Post(baseURL+"/api/v1/instances", "application/json", bytes.NewReader(instBody))
 	if err != nil {
@@ -171,11 +172,13 @@ func TestIntegration_BackupLifecycle(t *testing.T) {
 		t.Fatalf("list all backups: expected 200, got %d", resp.StatusCode)
 		_ = body
 	}
-	var allBackups []map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&allBackups)
+	var allBackupsResp struct {
+		Backups []map[string]interface{} `json:"backups"`
+	}
+	json.NewDecoder(resp.Body).Decode(&allBackupsResp)
 	resp.Body.Close()
 	found := false
-	for _, b := range allBackups {
+	for _, b := range allBackupsResp.Backups {
 		if uint(b["id"].(float64)) == backupID {
 			found = true
 			break

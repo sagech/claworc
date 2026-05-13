@@ -3,15 +3,18 @@ include .env.development
 -include .env
 export
 
-AGENT_IMAGE := glukw/claworc-agent
-BROWSER_BASE_IMAGE := glukw/claworc-browser-base
-BROWSER_CHROMIUM_IMAGE := glukw/claworc-browser-chromium
-BROWSER_CHROME_IMAGE := glukw/claworc-browser-chrome
-BROWSER_BRAVE_IMAGE := glukw/claworc-browser-brave
+AGENT_IMAGE := claworc/openclaw
+STABLE_IMAGE := glukw/claworc-stable
+STABLE_MIRROR_IMAGE := claworc/openclaw-stable
+STABLE_VERSION_URL := https://isitstable.com/api/v1/openclaw/latest-stable
+BROWSER_BASE_IMAGE := claworc/base-browser
+BROWSER_CHROMIUM_IMAGE := claworc/chromium-browser
+BROWSER_CHROME_IMAGE := claworc/chrome-browser
+BROWSER_BRAVE_IMAGE := claworc/brave-browser
 # Legacy aliases retained for targets that still use the old naming below.
 AGENT_BASE_IMAGE := $(BROWSER_BASE_IMAGE)
-AGENT_IMAGE_NAME := claworc-browser-chromium
-DASHBOARD_IMAGE := glukw/claworc
+AGENT_IMAGE_NAME := chromium-browser
+DASHBOARD_IMAGE := claworc/claworc
 TAG := latest
 PLATFORMS := linux/amd64,linux/arm64
 NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/')
@@ -22,12 +25,13 @@ KUBECONFIG := ../kubeconfig
 HELM_RELEASE := claworc
 HELM_NAMESPACE := claworc
 
-.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec dashboard docker-prune release \
+.PHONY: agent agent-ci agent-base agent-base-china agent-build agent-test agent-push agent-exec agent-stable agent-stable-ci dashboard docker-prune release \
 	helm-install helm-upgrade helm-uninstall helm-template install-dev dev dev-docs \
 	pull-agent local-build local-up local-down local-logs local-clean control-plane \
 	ssh-integration-test ssh-file-integration-test test-integration-backend extract-models scrape-models test \
 	worker-deploy worker-test worker-build-models site-dev site-build site-deploy \
-	e2e e2e-debug e2e-install
+	e2e e2e-debug e2e-install \
+	migration migration-check
 
 agent: agent-base agent-push
 
@@ -67,6 +71,42 @@ agent-push:
 	docker buildx build --platform linux/amd64 $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_CHROME_IMAGE):$(TAG) -f agent/browser/Dockerfile.chrome --push agent/browser/ & \
 	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) --build-arg BASE_IMAGE=$(BROWSER_BASE_IMAGE):$(TAG) -t $(BROWSER_BRAVE_IMAGE):$(TAG) -f agent/browser/Dockerfile.brave --push agent/browser/ & \
 	wait
+
+# Nightly stable agent image: same Dockerfile as claworc/openclaw, but pins
+# OpenClaw to the version blessed by isitstable.com. Resolved at build time so
+# the image content only changes when the upstream verdict changes.
+agent-stable:
+	@echo "Resolving stable OpenClaw version from $(STABLE_VERSION_URL)..."
+	$(eval OPENCLAW_VERSION := $(shell curl -fsSL $(STABLE_VERSION_URL) | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])'))
+	@test -n "$(OPENCLAW_VERSION)" || (echo "Failed to resolve stable OpenClaw version" && exit 1)
+	@echo "Building $(STABLE_IMAGE) with openclaw@$(OPENCLAW_VERSION)..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
+		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
+		-t $(STABLE_IMAGE):$(TAG) \
+		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
+		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
+		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
+		-f agent/instance/Dockerfile --push agent/instance/
+
+# CI variant: build single-arch first and run the OpenClaw test suite against
+# the pinned image, only push multi-arch if tests pass.
+agent-stable-ci:
+	@echo "Resolving stable OpenClaw version from $(STABLE_VERSION_URL)..."
+	$(eval OPENCLAW_VERSION := $(shell curl -fsSL $(STABLE_VERSION_URL) | python3 -c 'import sys,json; print(json.load(sys.stdin)["version"])'))
+	@test -n "$(OPENCLAW_VERSION)" || (echo "Failed to resolve stable OpenClaw version" && exit 1)
+	@echo "Building+loading $(STABLE_IMAGE):test (openclaw@$(OPENCLAW_VERSION))..."
+	docker buildx build --platform linux/$(NATIVE_ARCH) $(CACHE_ARGS) \
+		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
+		-t $(STABLE_IMAGE):test -f agent/instance/Dockerfile --load agent/instance/
+	cd agent/tests && AGENT_INSTANCE_TEST_IMAGE=$(STABLE_IMAGE):test npm run test -- openclaw.test.ts
+	@echo "Pushing multi-arch $(STABLE_IMAGE) + $(STABLE_MIRROR_IMAGE) :$(TAG) and :$(OPENCLAW_VERSION)..."
+	docker buildx build --platform $(PLATFORMS) $(CACHE_ARGS) \
+		--build-arg OPENCLAW_VERSION=$(OPENCLAW_VERSION) \
+		-t $(STABLE_IMAGE):$(TAG) \
+		-t $(STABLE_IMAGE):$(OPENCLAW_VERSION) \
+		-t $(STABLE_MIRROR_IMAGE):$(TAG) \
+		-t $(STABLE_MIRROR_IMAGE):$(OPENCLAW_VERSION) \
+		-f agent/instance/Dockerfile --push agent/instance/
 
 AGENT_CONTAINER := claworc-agent-exec
 AGENT_SSH_PORT := 2222
@@ -162,6 +202,22 @@ e2e-debug:
 
 test:
 	cd control-plane && go test ./internal/...
+
+# Ask the migration-author Claude Code subagent to author the next
+# versioned Go migration based on the diff between the current GORM
+# models in control-plane/internal/database/models.go and the schema
+# produced by replaying all existing migrations. The subagent picks the
+# file name from what changed. See docs/migrations.md.
+migration:
+	@command -v claude >/dev/null 2>&1 || { echo "error: 'claude' CLI not found in PATH"; exit 1; }
+	claude -p "Use the migration-author subagent to generate the next versioned Go migration based on current GORM model changes. Read the agent definition at .claude/agents/migration-author.md and follow its instructions exactly."
+
+# Apply all migrations against a fresh in-memory SQLite database and
+# assert the resulting schema covers every model. CI runs this on every
+# PR. Developers run it locally to confirm a new migration closes a
+# drift introduced by editing models.go.
+migration-check:
+	cd control-plane && go run ./cmd/migrationcheck
 
 extract-models:
 	python3 scripts/extract_models.py
